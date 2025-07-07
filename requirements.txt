@@ -1,0 +1,7 @@
+setuptools==68.2.2
+wheel==0.42.0
+aiogram==3.4.1
+aiohttp==3.9.3
+python-dotenv==1.0.1
+pydantic==2.5.3
+pydantic-core==2.14.6 --no-binary pydantic-core
