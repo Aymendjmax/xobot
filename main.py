@@ -82,7 +82,7 @@ def safe_callback_handler(func):
     async def wrapper(callback: types.CallbackQuery, *args, **kwargs):
         try:
             debug_callback_data(callback, func.__name__)
-            return await func(callback, *args, **kwargs)
+            return await func(callback, *args)
         except Exception as e:
             logger.error(f"خطأ في {func.__name__}: {str(e)}")
             logger.error(f"تفاصيل الخطأ: {traceback.format_exc()}")
@@ -241,7 +241,7 @@ async def show_main_menu(message: types.Message):
 
 @dp.callback_query(lambda c: c.data == "check_subscription")
 @safe_callback_handler
-async def check_subscription_callback(callback: types.CallbackQuery, state: FSMContext):
+async def check_subscription_callback(callback: types.CallbackQuery):
     """معالج زر التحقق من الاشتراك"""
     user_id = callback.from_user.id
 
@@ -266,7 +266,6 @@ async def check_subscription_callback(callback: types.CallbackQuery, state: FSMC
         """,
         reply_markup=create_main_menu_keyboard()
     )
-    await state.set_state(XOStates.main_menu)
     await callback.answer("تم التحقق بنجاح!")
 
 @dp.callback_query(lambda c: c.data == "how_to_play")
@@ -434,7 +433,7 @@ async def join_challenge_callback(callback: types.CallbackQuery):
                 [InlineKeyboardButton(text="🎮 انضم للعبة", callback_data=f"join_challenge_{game_id}")]
             ])
         else:
-            # إذا انضم كلا اللاعبين، إظهر شبكة اللعب
+            # إذا انضم كلا اللاعبين، إظهار شبكة اللعب
             keyboard = create_game_board(current_game_data, game_id)
 
         # تحديث الرسالة
