@@ -455,7 +455,6 @@ async def handle_symbol_input(message: types.Message, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="▶️ متابعة", callback_data="proceed_to_challenge")]
             ])
-        )
 
 @dp.callback_query(lambda c: c.data == "proceed_to_challenge")
 @safe_callback_handler
@@ -861,7 +860,7 @@ async def reset_game_callback(callback: types.CallbackQuery):
         reset_text = """
 🎯 تحدي XO جديد وحماسي!
 
-🔥 هل أنت مستعد لجولة جديدة?
+🔥 هل أنت مستعد لجولة جديدة؟
 ⚡ لعبة سريعة ومثيرة تنتظرك!
 🏆 من سيكون بطل هذه المرة؟
 
@@ -914,9 +913,9 @@ async def inline_query_handler(inline_query: types.InlineQuery, state: FSMContex
                     message_text=f"""
 🎯 تحدي XO حماسي!
 
-🔥 هل أنت مستعد لإثبات مهاراتك?
+🔥 هل أنت مستعد لإثبات مهاراتك؟
 ⚡ لعبة سريعة ومثيرة تنتظرك!
-🏆 من سيكون بطل هذه الجولة?
+🏆 من سيكون بطل هذه الجولة؟
 
 الرموز المستخدمة:
 اللاعب الأول: {player1_symbol}
