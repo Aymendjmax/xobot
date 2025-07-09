@@ -439,22 +439,25 @@ async def handle_symbol_input(message: types.Message, state: FSMContext):
     if "player1_symbol" not in user_data:
         # هذا هو رمز اللاعب الأول
         await state.update_data(player1_symbol=message.text)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_symbols")]
+        ])
         await message.answer(
             "📝 الرجاء إرسال الرمز الذي تريده للاعب الثاني:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_symbols")]
-            ])
-    elif "player2_symbol" not in user_data:
-        # هذا هو رمز اللاعب الثاني
-        await state.update_data(player2_symbol=message.text)
-        
-        # متابعة إلى إنشاء التحدي
-        user_data = await state.get_data()
-        await message.answer(
-            f"✅ تم تعيين الرموز:\n\nاللاعب الأول: {user_data['player1_symbol']}\nاللاعب الثاني: {user_data['player2_symbol']}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            reply_markup=keyboard
+        )
+    else:
+        if "player2_symbol" not in user_data:
+            # هذا هو رمز اللاعب الثاني
+            await state.update_data(player2_symbol=message.text)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="▶️ متابعة", callback_data="proceed_to_challenge")]
             ])
+            user_data = await state.get_data()
+            await message.answer(
+                f"✅ تم تعيين الرموز:\n\nاللاعب الأول: {user_data['player1_symbol']}\nاللاعب الثاني: {user_data['player2_symbol']}",
+                reply_markup=keyboard
+            )
 
 @dp.callback_query(lambda c: c.data == "proceed_to_challenge")
 @safe_callback_handler
