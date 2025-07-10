@@ -52,9 +52,6 @@ class XOStates(StatesGroup):
 # هيكل: {user_id: {game_id: game_data}}
 games: Dict[int, Dict[str, Dict]] = {}
 
-# نظام عد النقاط
-player_wins: Dict[int, Dict[int, int]] = {}  # {game_owner_id: {player_id: win_count}}
-
 # === دوال اكتشاف الأخطاء ===
 
 def debug_callback_data(callback: types.CallbackQuery, function_name: str):
@@ -184,21 +181,14 @@ def find_game_by_id(game_id: str):
             return user_id, user_games[game_id]
     return None, None
 
-def get_win_count(owner_id: int, player_id: int) -> int:
-    """الحصول على عدد مرات الفوز للاعب"""
-    if owner_id not in player_wins:
-        return 0
-    return player_wins[owner_id].get(player_id, 0)
-
 def format_game_text(game_data: Dict) -> str:
     """تنسيق نص اللعبة بشكل جذاب"""
     player1_name = game_data['player1_username']
     player2_name = game_data['player2_username'] or "في الانتظار..."
     
-    # الحصول على عدد مرات الفوز
-    owner_id = game_data.get('owner_id', None)
-    player1_wins = get_win_count(owner_id, game_data['player1_id']) if owner_id else 0
-    player2_wins = get_win_count(owner_id, game_data['player2_id']) if owner_id and game_data.get('player2_id') else 0
+    # الحصول على عدد مرات الفوز في هذه الجلسة
+    player1_wins = game_data.get('player1_wins', 0)
+    player2_wins = game_data.get('player2_wins', 0)
 
     if game_data.get('waiting_for_second_player', False):
         return f"""
@@ -434,14 +424,9 @@ async def join_challenge_callback(callback: types.CallbackQuery):
             'game_over': False,
             'winner': None,
             'waiting_for_second_player': True,
-            'owner_id': user_id  # مالك اللعبة لنظام النقاط
+            'player1_wins': 0,  # نقاط اللاعب الأول
+            'player2_wins': 0   # نقاط اللاعب الثاني
         }
-
-        # تهيئة نظام النقاط
-        if user_id not in player_wins:
-            player_wins[user_id] = {}
-        if user_id not in player_wins[user_id]:
-            player_wins[user_id][user_id] = 0
 
         logger.info(f"✅ تم إنشاء لعبة جديدة {game_id} - اللاعب الأول (X): {username}")
 
@@ -472,12 +457,6 @@ async def join_challenge_callback(callback: types.CallbackQuery):
         games[game_owner_id][game_id]['player2_id'] = user_id
         games[game_owner_id][game_id]['player2_username'] = username
         games[game_owner_id][game_id]['waiting_for_second_player'] = False
-
-        # تهيئة نقاط اللاعب الثاني
-        if game_owner_id not in player_wins:
-            player_wins[game_owner_id] = {}
-        if user_id not in player_wins[game_owner_id]:
-            player_wins[game_owner_id][user_id] = 0
 
         logger.info(f"✅ انضم اللاعب الثاني (O): {username} إلى اللعبة {game_id}")
 
@@ -576,14 +555,11 @@ async def game_move_callback(callback: types.CallbackQuery):
         games[game_owner_id][game_id]['game_over'] = True
         games[game_owner_id][game_id]['winner'] = winner
         
-        # تحديث عدد مرات الفوز
-        winner_id = game_data['player1_id'] if winner == "❌" else game_data['player2_id']
-        if game_owner_id in player_wins and winner_id in player_wins[game_owner_id]:
-            player_wins[game_owner_id][winner_id] += 1
+        # تحديث عدد مرات الفوز للاعب الفائز
+        if winner == "❌":
+            games[game_owner_id][game_id]['player1_wins'] += 1
         else:
-            if game_owner_id not in player_wins:
-                player_wins[game_owner_id] = {}
-            player_wins[game_owner_id][winner_id] = 1
+            games[game_owner_id][game_id]['player2_wins'] += 1
     elif is_full:
         games[game_owner_id][game_id]['game_over'] = True
     else:
@@ -714,7 +690,8 @@ async def reset_game_callback(callback: types.CallbackQuery):
             'game_over': False,
             'winner': None,
             'waiting_for_second_player': False,
-            'owner_id': game_owner_id
+            'player1_wins': old_data_copy.get('player1_wins', 0),  # الحفاظ على نقاط اللاعبين
+            'player2_wins': old_data_copy.get('player2_wins', 0)   # الحفاظ على نقاط اللاعبين
         }
 
         # رسالة اللعبة الجديدة مع الأدوار المبدلة
