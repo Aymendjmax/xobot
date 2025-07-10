@@ -40,19 +40,20 @@ if not DEVELOPER_USERNAME:
 
 # إنشاء كائنات البوت والموزع
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+dp = Dispatcher(storage=MemoryStorage())
 
 # حالات المحادثة
 class XOStates(StatesGroup):
     waiting_subscription = State()
     main_menu = State()
-    choosing_symbols = State()  # حالة جديدة لاختيار الرموز
     in_game = State()
 
 # تخزين بيانات الألعاب في الذاكرة
 # هيكل: {user_id: {game_id: game_data}}
 games: Dict[int, Dict[str, Dict]] = {}
+
+# نظام عد النقاط
+player_wins: Dict[int, Dict[int, int]] = {}  # {game_owner_id: {player_id: win_count}}
 
 # === دوال اكتشاف الأخطاء ===
 
@@ -81,10 +82,10 @@ def debug_callback_data(callback: types.CallbackQuery, function_name: str):
 
 def safe_callback_handler(func):
     """مُزخرف لالتقاط الأخطاء في معالجات الاستدعاءات"""
-    async def wrapper(callback: types.CallbackQuery, state: FSMContext, *args, **kwargs):
+    async def wrapper(callback: types.CallbackQuery, *args, **kwargs):
         try:
             debug_callback_data(callback, func.__name__)
-            return await func(callback, state, *args, **kwargs)
+            return await func(callback, *args)
         except Exception as e:
             logger.error(f"خطأ في {func.__name__}: {str(e)}")
             logger.error(f"تفاصيل الخطأ: {traceback.format_exc()}")
@@ -120,7 +121,7 @@ def create_subscription_keyboard():
     return keyboard
 
 def create_game_board(game_data: Dict, game_id: str) -> InlineKeyboardMarkup:
-    """إنشاء شبكة اللعبة 3x3"""
+    """إنشاء شبكة اللعبة 3x3 مع أزرار التحكم"""
     board = game_data['board']
     keyboard = []
 
@@ -135,16 +136,12 @@ def create_game_board(game_data: Dict, game_id: str) -> InlineKeyboardMarkup:
         keyboard.append(row)
 
     # إضافة أزرار التحكم
-    control_buttons = []
+    control_buttons = [
+        InlineKeyboardButton(text="🔄 إعادة اللعب", callback_data=f"reset_{game_id}"),
+        InlineKeyboardButton(text="🗑️ حذف اللعبة", callback_data=f"delete_{game_id}")
+    ]
 
-    # زر إعادة اللعب (متاح في أي وقت)
-    control_buttons.append(InlineKeyboardButton(text="🔄 إعادة اللعبة", callback_data=f"reset_{game_id}"))
-    
-    # زر حذف اللعبة (متاح دائماً)
-    control_buttons.append(InlineKeyboardButton(text="🗑️ حذف اللعبة", callback_data=f"delete_{game_id}"))
-
-    if control_buttons:
-        keyboard.append(control_buttons)
+    keyboard.append(control_buttons)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -186,6 +183,75 @@ def find_game_by_id(game_id: str):
         if game_id in user_games:
             return user_id, user_games[game_id]
     return None, None
+
+def get_win_count(owner_id: int, player_id: int) -> int:
+    """الحصول على عدد مرات الفوز للاعب"""
+    if owner_id not in player_wins:
+        return 0
+    return player_wins[owner_id].get(player_id, 0)
+
+def format_game_text(game_data: Dict) -> str:
+    """تنسيق نص اللعبة بشكل جذاب"""
+    player1_name = game_data['player1_username']
+    player2_name = game_data['player2_username'] or "في الانتظار..."
+    
+    # الحصول على عدد مرات الفوز
+    owner_id = game_data.get('owner_id', None)
+    player1_wins = get_win_count(owner_id, game_data['player1_id']) if owner_id else 0
+    player2_wins = get_win_count(owner_id, game_data['player2_id']) if owner_id and game_data.get('player2_id') else 0
+
+    if game_data.get('waiting_for_second_player', False):
+        return f"""
+🎮 **تحدي XO الجديد!**
+
+👤 **اللاعب الأول**: {player1_name} ❌
+🏆 **الانتصارات**: {player1_wins}
+
+⏳ **في انتظار اللاعب الثاني** (⭕)
+        """
+    
+    if game_data.get('game_over', False):
+        if game_data['winner']:
+            winner_name = game_data['player1_username'] if game_data['winner'] == "❌" else game_data['player2_username']
+            return f"""
+🏁 **انتهت اللعبة!**
+
+🎉 **الفائز**: {winner_name} {game_data['winner']}
+
+👤 **اللاعب الأول**: {player1_name} ❌
+🏆 **الانتصارات**: {player1_wins}
+
+👤 **اللاعب الثاني**: {game_data['player2_username']} ⭕
+🏆 **الانتصارات**: {player2_wins}
+        """
+        else:
+            return f"""
+🤝 **انتهت اللعبة!**
+
+⚖️ **النتيجة**: تعادل!
+
+👤 **اللاعب الأول**: {player1_name} ❌
+🏆 **الانتصارات**: {player1_wins}
+
+👤 **اللاعب الثاني**: {game_data['player2_username']} ⭕
+🏆 **الانتصارات**: {player2_wins}
+        """
+    
+    # حالة اللعبة الجارية
+    next_player = game_data['player1_username'] if game_data['current_player'] == 'X' else game_data['player2_username']
+    next_symbol = "❌" if game_data['current_player'] == 'X' else "⭕"
+    
+    return f"""
+🎮 **جولة XO مستمرة!**
+
+👤 **اللاعب الأول**: {player1_name} ❌
+🏆 **الانتصارات**: {player1_wins}
+
+👤 **اللاعب الثاني**: {game_data['player2_username']} ⭕
+🏆 **الانتصارات**: {player2_wins}
+
+⏰ **دور**: {next_player} {next_symbol}
+    """
 
 # === معالجات الأوامر ===
 
@@ -242,7 +308,7 @@ async def show_main_menu(message: types.Message):
 
 @dp.callback_query(lambda c: c.data == "check_subscription")
 @safe_callback_handler
-async def check_subscription_callback(callback: types.CallbackQuery, state: FSMContext):
+async def check_subscription_callback(callback: types.CallbackQuery):
     """معالج زر التحقق من الاشتراك"""
     user_id = callback.from_user.id
 
@@ -268,11 +334,10 @@ async def check_subscription_callback(callback: types.CallbackQuery, state: FSMC
         reply_markup=create_main_menu_keyboard()
     )
     await callback.answer("تم التحقق بنجاح!")
-    await state.set_state(XOStates.main_menu)
 
 @dp.callback_query(lambda c: c.data == "how_to_play")
 @safe_callback_handler
-async def how_to_play_callback(callback: types.CallbackQuery, state: FSMContext):
+async def how_to_play_callback(callback: types.CallbackQuery):
     """معالج زر كيفية اللعب"""
     instructions = """
 📖 كيفية اللعب:
@@ -295,7 +360,7 @@ async def how_to_play_callback(callback: types.CallbackQuery, state: FSMContext)
 
 6️⃣ الفوز: اربط 3 رموز متتالية (أفقياً، عمودياً، أو قطرياً)
 
-7️⃣ إعادة اللعب: بعد انتهاء الجولة يمكنك الضغط على "🎮 اقبل التحدي الجديد!"
+7️⃣ إعادة اللعب: بعد انتهاء الجولة يمكنك الضغط على "🔄 إعادة اللعب"
    • ملاحظة: عند إعادة اللعب يتم تبديل الأدوار تلقائياً!
 
 🎯 اللاعب الأول: ❌ (إكس) - يبدأ اللعب
@@ -313,95 +378,11 @@ async def how_to_play_callback(callback: types.CallbackQuery, state: FSMContext)
         instructions,
         reply_markup=back_keyboard
     )
-    await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "start_challenge")
 @safe_callback_handler
-async def start_challenge_callback(callback: types.CallbackQuery, state: FSMContext):
+async def start_challenge_callback(callback: types.CallbackQuery):
     """معالج زر تحدي اللعبة"""
-    # الانتقال إلى حالة اختيار الرموز
-    await state.set_state(XOStates.choosing_symbols)
-    
-    # إنشاء لوحة مفاتيح اختيار الرموز
-    symbols_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔤 إضافة رمز مخصص", callback_data="custom_symbols")],
-        [InlineKeyboardButton(text="⚪ الرموز الافتراضية", callback_data="default_symbols")],
-        [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_main")]
-    ])
-    
-    symbols_message = """
-🎮 إعدادات الرموز:
-
-يمكنك اختيار رموز مخصصة للاعبين بدلاً من الرموز الافتراضية (❌ و ⭕)
-
-🔤 إضافة رمز مخصص: اختر رمزاً لكل لاعب
-⚪ الرموز الافتراضية: استخدم ❌ و ⭕
-
-👇 اختر الخيار المناسب لك:
-    """
-    
-    await callback.message.edit_text(
-        symbols_message,
-        reply_markup=symbols_keyboard
-    )
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "custom_symbols")
-@safe_callback_handler
-async def custom_symbols_callback(callback: types.CallbackQuery, state: FSMContext):
-    """معالج اختيار الرموز المخصصة"""
-    # حفظ اختيار الرموز المخصصة في حالة المستخدم
-    await state.update_data(symbols_type="custom")
-    
-    # طلب إدخال رمز اللاعب الأول
-    await callback.message.edit_text(
-        "📝 الرجاء إرسال الرمز الذي تريده للاعب الأول (مثل: 🔥، ⭐، إلخ):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_symbols")]
-        ])
-    )
-    await callback.answer("الرجاء إرسال رمز للاعب الأول")
-
-@dp.callback_query(lambda c: c.data == "default_symbols")
-@safe_callback_handler
-async def default_symbols_callback(callback: types.CallbackQuery, state: FSMContext):
-    """معالج اختيار الرموز الافتراضية"""
-    # حفظ اختيار الرموز الافتراضية في حالة المستخدم
-    await state.update_data(symbols_type="default", player1_symbol="❌", player2_symbol="⭕")
-    
-    # متابعة إلى إنشاء التحدي
-    await create_challenge(callback, state)
-    await callback.answer("تم اختيار الرموز الافتراضية")
-
-@dp.callback_query(lambda c: c.data == "back_to_symbols")
-@safe_callback_handler
-async def back_to_symbols_callback(callback: types.CallbackQuery, state: FSMContext):
-    """العودة إلى شاشة اختيار الرموز"""
-    await state.set_state(XOStates.choosing_symbols)
-    
-    symbols_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔤 إضافة رمز مخصص", callback_data="custom_symbols")],
-        [InlineKeyboardButton(text="⚪ الرموز الافتراضية", callback_data="default_symbols")],
-        [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_main")]
-    ])
-    
-    await callback.message.edit_text(
-        "🎮 إعدادات الرموز:\n\nاختر خياراً لرموز اللاعبين:",
-        reply_markup=symbols_keyboard
-    )
-    await callback.answer()
-
-async def create_challenge(callback: types.CallbackQuery, state: FSMContext):
-    """إنشاء التحدي بعد اختيار الرموز"""
-    # استرجاع بيانات الرموز
-    user_data = await state.get_data()
-    symbols_type = user_data.get("symbols_type", "default")
-    
-    if symbols_type == "custom":
-        # إذا كان المستخدم يريد رموزاً مخصصة، انتظر رموزه
-        return
-    
-    # إنشاء لوحة مفاتيح اختيار المحادثة
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ اختر المحادثة", switch_inline_query="play_xo")],
         [InlineKeyboardButton(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]
@@ -420,77 +401,10 @@ async def create_challenge(callback: types.CallbackQuery, state: FSMContext):
         challenge_message,
         reply_markup=keyboard
     )
-    await state.set_state(XOStates.main_menu)
-
-@dp.message(XOStates.choosing_symbols)
-async def handle_symbol_input(message: types.Message, state: FSMContext):
-    """معالج إدخال الرموز المخصصة"""
-    user_data = await state.get_data()
-    symbols_type = user_data.get("symbols_type", "default")
-    
-    if symbols_type != "custom":
-        return
-    
-    # التحقق من أن الرسالة تحتوي على رمز واحد فقط
-    if len(message.text) != 1:
-        await message.reply("⛔ الرجاء إدخال رمز واحد فقط (مثل: 🔥، ⭐، إلخ)")
-        return
-    
-    # حفظ الرمز في حالة المستخدم
-    user_data = await state.get_data()
-    
-    if "player1_symbol" not in user_data:
-        # هذا هو رمز اللاعب الأول
-        await state.update_data(player1_symbol=message.text)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 العودة", callback_data="back_to_symbols")]
-        ])
-        await message.answer(
-            "📝 الرجاء إرسال الرمز الذي تريده للاعب الثاني:",
-            reply_markup=keyboard
-        )
-    else:
-        if "player2_symbol" not in user_data:
-            # هذا هو رمز اللاعب الثاني
-            await state.update_data(player2_symbol=message.text)
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="▶️ متابعة", callback_data="proceed_to_challenge")]
-            ])
-            user_data = await state.get_data()
-            await message.answer(
-                f"✅ تم تعيين الرموز:\n\nاللاعب الأول: {user_data['player1_symbol']}\nاللاعب الثاني: {user_data['player2_symbol']}",
-                reply_markup=keyboard
-            )
-
-@dp.callback_query(lambda c: c.data == "proceed_to_challenge")
-@safe_callback_handler
-async def proceed_to_challenge_callback(callback: types.CallbackQuery, state: FSMContext):
-    """المتابعة إلى إنشاء التحدي بعد اختيار الرموز"""
-    # إنشاء لوحة مفاتيح اختيار المحادثة
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ اختر المحادثة", switch_inline_query="play_xo")],
-        [InlineKeyboardButton(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]
-    ])
-
-    challenge_message = """
-🎯 حان وقت التحدي!
-
-🔥 اضغط الزر أدناه لاختيار المحادثة
-📤 سيتم إرسال تحدي مثير لأصدقائك
-⚡ من سيكون الفائز؟ اكتشف الآن!
-
-👇 اختر المحادثة وابدأ المعركة!
-    """
-    await callback.message.edit_text(
-        challenge_message,
-        reply_markup=keyboard
-    )
-    await state.set_state(XOStates.main_menu)
-    await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("join_challenge"))
 @safe_callback_handler
-async def join_challenge_callback(callback: types.CallbackQuery, state: FSMContext):
+async def join_challenge_callback(callback: types.CallbackQuery):
     """معالج زر الانضمام للتحدي - نظام لاعبين محسن"""
 
     # استخراج معرف اللعبة من callback_data
@@ -505,15 +419,7 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
     # البحث عن اللعبة في جميع المستخدمين
     game_owner_id, game_data = find_game_by_id(game_id)
 
-    # متغير لنص اللعبة
-    game_text = ""
-
     if not game_data:
-        # استرجاع بيانات الرموز من حالة المستخدم
-        user_data = await state.get_data()
-        player1_symbol = user_data.get('player1_symbol', '❌')
-        player2_symbol = user_data.get('player2_symbol', '⭕')
-        
         # إنشاء لعبة جديدة - اللاعب الأول (X)
         if user_id not in games:
             games[user_id] = {}
@@ -525,35 +431,32 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
             'player2_id': None,     # في انتظار اللاعب الثاني
             'player1_username': username,
             'player2_username': None,
-            'player1_symbol': player1_symbol,
-            'player2_symbol': player2_symbol,
             'game_over': False,
             'winner': None,
             'waiting_for_second_player': True,
-            'player1_wins': 0,  # عدد مرات فوز اللاعب الأول
-            'player2_wins': 0   # عدد مرات فوز اللاعب الثاني
+            'owner_id': user_id  # مالك اللعبة لنظام النقاط
         }
+
+        # تهيئة نظام النقاط
+        if user_id not in player_wins:
+            player_wins[user_id] = {}
+        if user_id not in player_wins[user_id]:
+            player_wins[user_id][user_id] = 0
 
         logger.info(f"✅ تم إنشاء لعبة جديدة {game_id} - اللاعب الأول (X): {username}")
 
-        game_text = f"""
-🎮 لعبة XO - في انتظار اللاعب الثاني!
+        # تحديث رسالة اللعبة
+        game_text = format_game_text(games[user_id][game_id])
 
-👤 اللاعب الأول: {username} ({player1_symbol})
-⏳ في انتظار اللاعب الثاني ({player2_symbol})
-
-🔥 يحتاج لاعب آخر للانضمام لبدء اللعبة!
-        """
-
-        await callback.answer(f"تم الانضمام كاللاعب الأول ({player1_symbol})! في انتظار اللاعب الثاني 🎮")
+        await callback.answer("تم الانضمام كاللاعب الأول (X)! في انتظار اللاعب الثاني 🎮")
 
     else:
         # التحقق من أن اللاعب لم ينضم بالفعل
         if user_id == game_data['player1_id']:
-            await callback.answer(f"أنت مشارك بالفعل في اللعبة كاللاعب الأول ({game_data['player1_symbol']})!", show_alert=True)
+            await callback.answer("أنت مشارك بالفعل في اللعبة كاللاعب الأول (X)!", show_alert=True)
             return
-        elif user_id == game_data['player2_id']:
-            await callback.answer(f"أنت مشارك بالفعل في اللعبة كاللاعب الثاني ({game_data['player2_symbol']})!", show_alert=True)
+        elif game_data.get('player2_id') and user_id == game_data['player2_id']:
+            await callback.answer("أنت مشارك بالفعل في اللعبة كاللاعب الثاني (O)!", show_alert=True)
             return
 
         # التحقق من حالة اللعبة
@@ -570,19 +473,15 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
         games[game_owner_id][game_id]['player2_username'] = username
         games[game_owner_id][game_id]['waiting_for_second_player'] = False
 
+        # تهيئة نقاط اللاعب الثاني
+        if game_owner_id not in player_wins:
+            player_wins[game_owner_id] = {}
+        if user_id not in player_wins[game_owner_id]:
+            player_wins[game_owner_id][user_id] = 0
+
         logger.info(f"✅ انضم اللاعب الثاني (O): {username} إلى اللعبة {game_id}")
 
-        # تحديث نص اللعبة
-        game_text = f"""
-🎮 لعبة XO بدأت!
-
-👤 اللاعب الأول: {games[game_owner_id][game_id]['player1_username']} ({games[game_owner_id][game_id]['player1_symbol']})
-👤 اللاعب الثاني: {username} ({games[game_owner_id][game_id]['player2_symbol']})
-
-⏰ دور: {games[game_owner_id][game_id]['player1_username']} ({games[game_owner_id][game_id]['player1_symbol']})
-        """
-
-        await callback.answer(f"تم الانضمام كاللاعب الثاني ({games[game_owner_id][game_id]['player2_symbol']})! بدأت اللعبة! 🎮")
+        await callback.answer("تم الانضمام كاللاعب الثاني (O)! بدأت اللعبة! 🎮")
 
     try:
         # الحصول على بيانات اللعبة المحدثة
@@ -598,15 +497,18 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
             # إذا انضم كلا اللاعبين، إظهار شبكة اللعب
             keyboard = create_game_board(current_game_data, game_id)
 
+        # تنسيق نص اللعبة
+        game_text = format_game_text(current_game_data)
+
         # تحديث الرسالة
         if callback.message:
             await callback.message.edit_text(
-                game_text.strip(),
+                game_text,
                 reply_markup=keyboard
             )
         elif callback.inline_message_id:
             await bot.edit_message_text(
-                text=game_text.strip(),
+                text=game_text,
                 inline_message_id=callback.inline_message_id,
                 reply_markup=keyboard
             )
@@ -620,7 +522,7 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
 
 @dp.callback_query(lambda c: c.data.startswith("move_"))
 @safe_callback_handler
-async def game_move_callback(callback: types.CallbackQuery, state: FSMContext):
+async def game_move_callback(callback: types.CallbackQuery):
     """معالج حركات اللعبة"""
 
     # استخراج معرف اللعبة والموضع من callback_data
@@ -647,7 +549,7 @@ async def game_move_callback(callback: types.CallbackQuery, state: FSMContext):
         return
 
     # تحديد دور اللاعب
-    current_symbol = game_data['player1_symbol'] if game_data['current_player'] == 'X' else game_data['player2_symbol']
+    current_symbol = "❌" if game_data['current_player'] == 'X' else "⭕"
 
     # التحقق من أن اللاعب هو صاحب الدور
     if game_data['current_player'] == 'X' and user_id != game_data['player1_id']:
@@ -675,49 +577,23 @@ async def game_move_callback(callback: types.CallbackQuery, state: FSMContext):
         games[game_owner_id][game_id]['winner'] = winner
         
         # تحديث عدد مرات الفوز
-        if winner == game_data['player1_symbol']:
-            games[game_owner_id][game_id]['player1_wins'] += 1
-            winner_username = game_data['player1_username']
+        winner_id = game_data['player1_id'] if winner == "❌" else game_data['player2_id']
+        if game_owner_id in player_wins and winner_id in player_wins[game_owner_id]:
+            player_wins[game_owner_id][winner_id] += 1
         else:
-            games[game_owner_id][game_id]['player2_wins'] += 1
-            winner_username = game_data['player2_username']
-            
-        game_text = f"""
-🏆 انتهت اللعبة!
-
-🎉 الفائز هو: {winner_username} ({winner})
-
-📊 إحصائيات الفوز:
-{game_data['player1_username']}: {games[game_owner_id][game_id]['player1_wins']} فوز/فوزات
-{game_data['player2_username']}: {games[game_owner_id][game_id]['player2_wins']} فوز/فوزات
-        """
+            if game_owner_id not in player_wins:
+                player_wins[game_owner_id] = {}
+            player_wins[game_owner_id][winner_id] = 1
     elif is_full:
         games[game_owner_id][game_id]['game_over'] = True
-        game_text = f"""
-🤝 انتهت اللعبة!
-
-⚖️ النتيجة: تعادل!
-
-📊 إحصائيات الفوز:
-{game_data['player1_username']}: {games[game_owner_id][game_id]['player1_wins']} فوز/فوزات
-{game_data['player2_username']}: {games[game_owner_id][game_id]['player2_wins']} فوز/فوزات
-        """
     else:
         # تغيير الدور
         games[game_owner_id][game_id]['current_player'] = 'O' if game_data['current_player'] == 'X' else 'X'
-        next_player = game_data['player1_username'] if games[game_owner_id][game_id]['current_player'] == 'X' else game_data['player2_username']
-        next_symbol = game_data['player1_symbol'] if games[game_owner_id][game_id]['current_player'] == 'X' else game_data['player2_symbol']
-        game_text = f"""
-🎮 لعبة XO نشطة!
-
-👤 اللاعب الأول: {game_data['player1_username']} ({game_data['player1_symbol']})
-👤 اللاعب الثاني: {game_data['player2_username']} ({game_data['player2_symbol']})
-
-⏰ دور: {next_player} ({next_symbol})
-        """
 
     try:
         updated_game_data = games[game_owner_id][game_id]
+        game_text = format_game_text(updated_game_data)
+        
         if callback.message:
             await callback.message.edit_text(
                 game_text,
@@ -736,9 +612,8 @@ async def game_move_callback(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "back_to_main")
 @safe_callback_handler
-async def back_to_main_callback(callback: types.CallbackQuery, state: FSMContext):
+async def back_to_main_callback(callback: types.CallbackQuery):
     """معالج زر العودة للقائمة الرئيسية"""
-    await state.set_state(XOStates.main_menu)
     welcome_text = """
 🎯 مرحباً بك في عالم لعبة XO المثيرة!
 
@@ -756,7 +631,7 @@ async def back_to_main_callback(callback: types.CallbackQuery, state: FSMContext
 
 @dp.callback_query(lambda c: c.data.startswith("delete"))
 @safe_callback_handler
-async def delete_game_callback(callback: types.CallbackQuery, state: FSMContext):
+async def delete_game_callback(callback: types.CallbackQuery):
     """معالج زر حذف اللعبة"""
 
     # استخراج معرف اللعبة من callback_data
@@ -784,7 +659,7 @@ async def delete_game_callback(callback: types.CallbackQuery, state: FSMContext)
         """
 
         delete_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 ابدأ تحدي جديد!", callback_data="start_challenge")]
+            [InlineKeyboardButton(text="🎮 ابدأ تحدي جديد!", callback_data=f"join_challenge_{create_unique_game_id()}")]
         ])
 
         try:
@@ -808,8 +683,8 @@ async def delete_game_callback(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.callback_query(lambda c: c.data.startswith("reset"))
 @safe_callback_handler
-async def reset_game_callback(callback: types.CallbackQuery, state: FSMContext):
-    """معالج زر إعادة اللعبة مع تبديل الأدوار"""
+async def reset_game_callback(callback: types.CallbackQuery):
+    """معالج زر إعادة اللعب مع تبديل الأدوار"""
 
     # استخراج معرف اللعبة من callback_data
     game_id = callback.data.split("_")[1]
@@ -821,42 +696,30 @@ async def reset_game_callback(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("اللعبة غير موجودة!", show_alert=True)
         return
 
-    # حفظ إحصائيات الفوز
-    player1_wins = old_game_data.get('player1_wins', 0)
-    player2_wins = old_game_data.get('player2_wins', 0)
+    # حفظ معلومات اللاعبين قبل حذف اللعبة
+    old_data_copy = old_game_data.copy()
+    del games[game_owner_id][game_id]
+    logger.info(f"تم حذف اللعبة {game_id} من المستخدم {game_owner_id}")
 
     # إنشاء لعبة جديدة مع تبديل الأدوار
-    if old_game_data.get('player1_id') and old_game_data.get('player2_id'):
+    if old_data_copy.get('player1_id') and old_data_copy.get('player2_id'):
         # تبديل الأدوار: اللاعب الثاني يصبح الأول والأول يصبح الثاني
         games[game_owner_id][game_id] = {
             'board': [""] * 9,
             'current_player': 'X',
-            'player1_id': old_game_data['player2_id'],      # اللاعب الثاني السابق يصبح الأول
-            'player2_id': old_game_data['player1_id'],      # اللاعب الأول السابق يصبح الثاني
-            'player1_username': old_game_data['player2_username'],  # تبديل الأسماء
-            'player2_username': old_game_data['player1_username'],
-            'player1_symbol': old_game_data['player2_symbol'],  # تبديل الرموز
-            'player2_symbol': old_game_data['player1_symbol'],
+            'player1_id': old_data_copy['player2_id'],      # اللاعب الثاني السابق يصبح الأول
+            'player2_id': old_data_copy['player1_id'],      # اللاعب الأول السابق يصبح الثاني
+            'player1_username': old_data_copy['player2_username'],  # تبديل الأسماء أيضاً
+            'player2_username': old_data_copy['player1_username'],
             'game_over': False,
             'winner': None,
             'waiting_for_second_player': False,
-            'player1_wins': player1_wins,  # الاحتفاظ بعدد مرات الفوز
-            'player2_wins': player2_wins
+            'owner_id': game_owner_id
         }
 
         # رسالة اللعبة الجديدة مع الأدوار المبدلة
-        reset_text = f"""
-🔄 تم إعادة اللعبة مع تبديل الأدوار!
-
-👤 اللاعب الأول: {games[game_owner_id][game_id]['player1_username']} ({games[game_owner_id][game_id]['player1_symbol']})
-👤 اللاعب الثاني: {games[game_owner_id][game_id]['player2_username']} ({games[game_owner_id][game_id]['player2_symbol']})
-
-⏰ دور: {games[game_owner_id][game_id]['player1_username']} ({games[game_owner_id][game_id]['player1_symbol']})
-
-📊 إحصائيات الفوز:
-{games[game_owner_id][game_id]['player1_username']}: {player2_wins} فوز/فوزات
-{games[game_owner_id][game_id]['player2_username']}: {player1_wins} فوز/فوزات
-        """
+        reset_text = format_game_text(games[game_owner_id][game_id])
+        reset_text += "\n\n🔄 تم تبديل الأدوار! اللاعب السابق الثاني أصبح الأول"
 
         reset_keyboard = create_game_board(games[game_owner_id][game_id], game_id)
         logger.info(f"تم إنشاء لعبة جديدة مع تبديل الأدوار للمستخدم {game_owner_id} واللعبة {game_id}")
@@ -896,7 +759,7 @@ async def reset_game_callback(callback: types.CallbackQuery, state: FSMContext):
 # === معالج الاستعلامات المضمنة ===
 
 @dp.inline_query()
-async def inline_query_handler(inline_query: types.InlineQuery, state: FSMContext):
+async def inline_query_handler(inline_query: types.InlineQuery):
     """معالج الاستعلامات المضمنة"""
     try:
         logger.info(f"استعلام مضمن من {inline_query.from_user.username}: {inline_query.query}")
@@ -905,11 +768,6 @@ async def inline_query_handler(inline_query: types.InlineQuery, state: FSMContex
             # إنشاء معرف فريد للعبة
             game_id = create_unique_game_id()
 
-            # استرجاع بيانات الرموز من حالة المستخدم
-            user_data = await state.get_data()
-            player1_symbol = user_data.get('player1_symbol', '❌')
-            player2_symbol = user_data.get('player2_symbol', '⭕')
-            
             # إنشاء نتيجة واحدة للتحدي
             result = InlineQueryResultArticle(
                 id="1",
@@ -922,10 +780,6 @@ async def inline_query_handler(inline_query: types.InlineQuery, state: FSMContex
 🔥 هل أنت مستعد لإثبات مهاراتك؟
 ⚡ لعبة سريعة ومثيرة تنتظرك!
 🏆 من سيكون بطل هذه الجولة؟
-
-الرموز المستخدمة:
-اللاعب الأول: {player1_symbol}
-اللاعب الثاني: {player2_symbol}
 
 👇 اقبل التحدي وابدأ المعركة!
                     """
