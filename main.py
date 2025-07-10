@@ -40,7 +40,8 @@ if not DEVELOPER_USERNAME:
 
 # إنشاء كائنات البوت والموزع
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
 # حالات المحادثة
 class XOStates(StatesGroup):
@@ -80,10 +81,10 @@ def debug_callback_data(callback: types.CallbackQuery, function_name: str):
 
 def safe_callback_handler(func):
     """مُزخرف لالتقاط الأخطاء في معالجات الاستدعاءات"""
-    async def wrapper(callback: types.CallbackQuery, *args, **kwargs):
+    async def wrapper(callback: types.CallbackQuery, state: FSMContext, *args, **kwargs):
         try:
             debug_callback_data(callback, func.__name__)
-            return await func(callback, *args)
+            return await func(callback, state, *args, **kwargs)
         except Exception as e:
             logger.error(f"خطأ في {func.__name__}: {str(e)}")
             logger.error(f"تفاصيل الخطأ: {traceback.format_exc()}")
@@ -241,7 +242,7 @@ async def show_main_menu(message: types.Message):
 
 @dp.callback_query(lambda c: c.data == "check_subscription")
 @safe_callback_handler
-async def check_subscription_callback(callback: types.CallbackQuery):
+async def check_subscription_callback(callback: types.CallbackQuery, state: FSMContext):
     """معالج زر التحقق من الاشتراك"""
     user_id = callback.from_user.id
 
@@ -267,10 +268,11 @@ async def check_subscription_callback(callback: types.CallbackQuery):
         reply_markup=create_main_menu_keyboard()
     )
     await callback.answer("تم التحقق بنجاح!")
+    await state.set_state(XOStates.main_menu)
 
 @dp.callback_query(lambda c: c.data == "how_to_play")
 @safe_callback_handler
-async def how_to_play_callback(callback: types.CallbackQuery):
+async def how_to_play_callback(callback: types.CallbackQuery, state: FSMContext):
     """معالج زر كيفية اللعب"""
     instructions = """
 📖 كيفية اللعب:
@@ -311,6 +313,7 @@ async def how_to_play_callback(callback: types.CallbackQuery):
         instructions,
         reply_markup=back_keyboard
     )
+    await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "start_challenge")
 @safe_callback_handler
@@ -617,7 +620,7 @@ async def join_challenge_callback(callback: types.CallbackQuery, state: FSMConte
 
 @dp.callback_query(lambda c: c.data.startswith("move_"))
 @safe_callback_handler
-async def game_move_callback(callback: types.CallbackQuery):
+async def game_move_callback(callback: types.CallbackQuery, state: FSMContext):
     """معالج حركات اللعبة"""
 
     # استخراج معرف اللعبة والموضع من callback_data
@@ -753,7 +756,7 @@ async def back_to_main_callback(callback: types.CallbackQuery, state: FSMContext
 
 @dp.callback_query(lambda c: c.data.startswith("delete"))
 @safe_callback_handler
-async def delete_game_callback(callback: types.CallbackQuery):
+async def delete_game_callback(callback: types.CallbackQuery, state: FSMContext):
     """معالج زر حذف اللعبة"""
 
     # استخراج معرف اللعبة من callback_data
@@ -805,7 +808,7 @@ async def delete_game_callback(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("reset"))
 @safe_callback_handler
-async def reset_game_callback(callback: types.CallbackQuery):
+async def reset_game_callback(callback: types.CallbackQuery, state: FSMContext):
     """معالج زر إعادة اللعبة مع تبديل الأدوار"""
 
     # استخراج معرف اللعبة من callback_data
