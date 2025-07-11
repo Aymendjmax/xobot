@@ -191,9 +191,9 @@ def format_game_text(game_data: Dict) -> str:
     player1_wins = game_data.get('player1_wins', 0)
     player2_wins = game_data.get('player2_wins', 0)
     
-    # تحديد الأدوار الحالية
-    player_x_name = game_data['player1_username'] if game_data['current_player_role'] == 'player1' else game_data.get('player2_username', '')
-    player_o_name = game_data.get('player2_username', '') if game_data['current_player_role'] == 'player1' else game_data['player1_username']
+    # تحديد الأدوار الثابتة (بدون تغيير)
+    player_x_name = game_data['player1_username']
+    player_o_name = game_data.get('player2_username', '')
     
     # تحديد دور اللاعب التالي
     next_player_name = game_data['player1_username'] if game_data['current_player'] == 'X' else game_data.get('player2_username', '')
@@ -206,12 +206,16 @@ def format_game_text(game_data: Dict) -> str:
 👤 **{player1_name}**: {player1_wins} انتصارات
 👤 **{player2_name}**: {player2_wins} انتصارات
 
+🔷 **الأدوار الثابتة**:
+- {player_x_name} يلعب ❌ (X)
+- {player_o_name} يلعب ⭕ (O)
+
 ⏳ في انتظار اللاعب الثاني للانضمام!
         """
     
     if game_data.get('game_over', False):
         if game_data['winner']:
-            winner_name = game_data['player1_username'] if game_data['winner'] == "❌" else game_data.get('player2_username', '')
+            winner_name = player_x_name if game_data['winner'] == "❌" else player_o_name
             return f"""
 🏁 **انتهت اللعبة!**
 
@@ -220,7 +224,7 @@ def format_game_text(game_data: Dict) -> str:
 👤 **{player1_name}**: {player1_wins} انتصارات
 👤 **{player2_name}**: {player2_wins} انتصارات
 
-🔷 **الأدوار الحالية**:
+🔷 **الأدوار الثابتة**:
 - {player_x_name} يلعب ❌ (X)
 - {player_o_name} يلعب ⭕ (O)
         """
@@ -233,7 +237,7 @@ def format_game_text(game_data: Dict) -> str:
 👤 **{player1_name}**: {player1_wins} انتصارات
 👤 **{player2_name}**: {player2_wins} انتصارات
 
-🔷 **الأدوار الحالية**:
+🔷 **الأدوار الثابتة**:
 - {player_x_name} يلعب ❌ (X)
 - {player_o_name} يلعب ⭕ (O)
         """
@@ -245,7 +249,7 @@ def format_game_text(game_data: Dict) -> str:
 👤 **{player1_name}**: {player1_wins} انتصارات
 👤 **{player2_name}**: {player2_wins} انتصارات
 
-🔷 **الأدوار الحالية**:
+🔷 **الأدوار الثابتة**:
 - {player_x_name} يلعب ❌ (X)
 - {player_o_name} يلعب ⭕ (O)
 
@@ -426,7 +430,6 @@ async def join_challenge_callback(callback: types.CallbackQuery):
         games[user_id][game_id] = {
             'board': [""] * 9,
             'current_player': 'X',
-            'current_player_role': 'player1',  # تمثيل دور اللاعب الحالي
             'player1_id': user_id,  # اللاعب الأول
             'player2_id': None,     # في انتظار اللاعب الثاني
             'player1_username': username,
@@ -541,10 +544,10 @@ async def game_move_callback(callback: types.CallbackQuery):
     current_symbol = "❌" if game_data['current_player'] == 'X' else "⭕"
 
     # التحقق من أن اللاعب هو صاحب الدور
-    if game_data['current_player'] == 'X' and user_id != game_data['player1_id'] and game_data['current_player_role'] == 'player1':
+    if game_data['current_player'] == 'X' and user_id != game_data['player1_id']:
         await callback.answer("ليس دورك! انتظر دورك.", show_alert=True)
         return
-    elif game_data['current_player'] == 'O' and user_id != game_data['player2_id'] and game_data['current_player_role'] == 'player2':
+    elif game_data['current_player'] == 'O' and user_id != game_data['player2_id']:
         await callback.answer("ليس دورك! انتظر دورك.", show_alert=True)
         return
 
@@ -567,22 +570,14 @@ async def game_move_callback(callback: types.CallbackQuery):
         
         # تحديث عدد مرات الفوز للاعب الفائز
         if winner == "❌":
-            if game_data['current_player_role'] == 'player1':
-                games[game_owner_id][game_id]['player1_wins'] += 1
-            else:
-                games[game_owner_id][game_id]['player2_wins'] += 1
+            games[game_owner_id][game_id]['player1_wins'] += 1
         else:
-            if game_data['current_player_role'] == 'player1':
-                games[game_owner_id][game_id]['player1_wins'] += 1
-            else:
-                games[game_owner_id][game_id]['player2_wins'] += 1
+            games[game_owner_id][game_id]['player2_wins'] += 1
     elif is_full:
         games[game_owner_id][game_id]['game_over'] = True
     else:
         # تغيير الدور
         games[game_owner_id][game_id]['current_player'] = 'O' if game_data['current_player'] == 'X' else 'X'
-        # تبديل دور اللاعب الحالي
-        games[game_owner_id][game_id]['current_player_role'] = 'player2' if game_data['current_player_role'] == 'player1' else 'player1'
 
     try:
         updated_game_data = games[game_owner_id][game_id]
@@ -705,21 +700,20 @@ async def reset_game_callback(callback: types.CallbackQuery):
         games[game_owner_id][game_id] = {
             'board': [""] * 9,
             'current_player': 'X',
-            'current_player_role': 'player1',  # إعادة تعيين الدور
-            'player1_id': old_data_copy['player1_id'],      # نفس اللاعب الأول
-            'player2_id': old_data_copy['player2_id'],      # نفس اللاعب الثاني
-            'player1_username': old_data_copy['player1_username'],
-            'player2_username': old_data_copy['player2_username'],
+            'player1_id': old_data_copy['player2_id'],      # اللاعب الثاني يصبح الأول
+            'player2_id': old_data_copy['player1_id'],      # اللاعب الأول يصبح الثاني
+            'player1_username': old_data_copy['player2_username'],
+            'player2_username': old_data_copy['player1_username'],
             'game_over': False,
             'winner': None,
             'waiting_for_second_player': False,
-            'player1_wins': player1_wins,  # نفس النقاط
-            'player2_wins': player2_wins   # نفس النقاط
+            'player1_wins': player2_wins,  # نفس النقاط للاعب الجديد الأول
+            'player2_wins': player1_wins   # نفس النقاط للاعب الجديد الثاني
         }
 
         # رسالة اللعبة الجديدة
         reset_text = format_game_text(games[game_owner_id][game_id])
-        reset_text += "\n\n🔄 تم إعادة اللعبة! الأدوار كما هي."
+        reset_text += "\n\n🔄 تم إعادة اللعبة! تم تبديل الأدوار بين اللاعبين."
 
         reset_keyboard = create_game_board(games[game_owner_id][game_id], game_id)
         logger.info(f"تم إنشاء لعبة جديدة للمستخدم {game_owner_id} واللعبة {game_id}")
@@ -729,7 +723,7 @@ async def reset_game_callback(callback: types.CallbackQuery):
         reset_text = """
 🎯 تحدي XO جديد وحماسي!
 
-🔥 هل أنت مستعد لجولة جديدة؟
+🔥 هل أنت مستعد لجولة جديدة?
 ⚡ لعبة سريعة ومثيرة تنتظرك!
 🏆 من سيكون بطل هذه المرة؟
 
@@ -777,7 +771,7 @@ async def inline_query_handler(inline_query: types.InlineQuery):
                     message_text=f"""
 🎯 تحدي XO حماسي!
 
-🔥 هل أنت مستعد لإثبات مهاراتك؟
+🔥 هل أنت مستعد لإثبات مهاراتك?
 ⚡ لعبة سريعة ومثيرة تنتظرك!
 🏆 من سيكون بطل هذه الجولة؟
 
