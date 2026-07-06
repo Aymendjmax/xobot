@@ -126,5 +126,5 @@ xobot/
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="Akio-web.vercel.app">@Akio co</a>
+  Made with ❤️ by <a url="Akio-web.vercel.app">Akio co</a>
 </p>
